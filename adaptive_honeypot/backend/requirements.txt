@@ -1,0 +1,14 @@
+Flask
+gunicorn
+redis
+python-dotenv
+prometheus-client
+numpy
+scikit-learn
+joblib
+xgboost
+requests
+
+Flask-Cors
+
+

@@ -1,0 +1,54 @@
+version: "3.8"
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: adaptive_redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    networks:
+      - adaptive_net
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: adaptive_honeypot-backend:latest
+    container_name: adaptive_backend
+    restart: unless-stopped
+    environment:
+      - REDIS_URL=${REDIS_URL}
+      - ADMIN_TOKEN=${ADMIN_TOKEN}
+      - MODELS_DIR=/data/models
+      - LOG_PATH=/data/logs
+      - HONEYPOT_ENABLED=${HONEYPOT_ENABLED}
+      - ML_CONF_THRESHOLD=${ML_CONF_THRESHOLD}
+    volumes:
+      - models_data:/data
+    depends_on:
+      - redis
+    networks:
+      - adaptive_net
+
+  nginx:
+    image: nginx:stable-alpine
+    container_name: adaptive_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      #- "443:443"   # enable after TLS setup
+    volumes:
+      - ./deploy/nginx/conf.d:/etc/nginx/conf.d:ro
+      - models_data:/data:ro
+    depends_on:
+      - backend
+    networks:
+      - adaptive_net
+
+volumes:
+  models_data:
+  redis_data:
+
+networks:
+  adaptive_net:

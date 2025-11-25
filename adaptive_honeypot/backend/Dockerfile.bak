@@ -1,0 +1,35 @@
+﻿# backend/Dockerfile (context = ./backend)
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# install minimal system deps used at build time
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# copy requirements (requirements.txt is inside ./backend context)
+COPY requirements.txt /app/requirements.txt
+
+RUN python -m pip install --upgrade pip setuptools wheel
+RUN pip install -r /app/requirements.txt
+
+# copy all backend source files into /app
+COPY . /app
+
+# create persistent dirs and non-root user
+RUN mkdir -p /var/log/adaptive \
+    && useradd -ms /bin/bash appuser \
+    && chown -R appuser:appuser /app /var/log/adaptive
+
+USER appuser
+
+ENV PYTHONPATH=/app
+
+# run Gunicorn (ensure backend/gunicorn_conf.py exists)
+CMD ["gunicorn", "-c", "backend/gunicorn_conf.py", "backend.app:app"]

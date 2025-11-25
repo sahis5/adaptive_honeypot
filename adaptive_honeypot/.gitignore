@@ -1,0 +1,65 @@
+# open project folder (if not already there)
+cd C:\Users\sahis\Desktop\fin_proj\adaptive_honeypot
+
+# (OPTION A) overwrite .gitignore with the merged content I provide below:
+# Use this single PowerShell command to replace the file (safe on Windows)
+@"
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.sqlite3
+*.db
+
+# Virtual environment
+.venv/
+env/
+venv/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# ML model artifacts (optional — comment out if you want to commit models)
+*.pkl
+*.joblib
+*.jsonl
+*.csv
+
+# PyInstaller build outputs
+backend/build/
+backend/dist/
+*.spec
+
+# Logs
+data/*.jsonl
+logs/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# VS Code
+.vscode/
+
+# Windows thumbnail and temp
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+"@ > .gitignore
+
+# Stage the resolved file
+git add .gitignore
+
+# Continue the rebase
+git rebase --continue
+
+# .env (DO NOT commit this file)
+ADMIN_TOKEN=supersecretlocaltoken
+REDIS_URL=redis://redis:6379/0
+HONEYPOT_ENABLED=true
+ML_CONF_THRESHOLD=0.65

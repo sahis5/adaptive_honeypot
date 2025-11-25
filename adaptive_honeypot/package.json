@@ -1,0 +1,30 @@
+{
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "node-fetch": "^3.3.2"
+  },
+  "name": "adaptive_honeypot",
+  "version": "1.0.0",
+  "description": "Adaptive Honeypot System using ML and RL",
+  "main": "index.js",
+  "directories": {
+    "example": "examples",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sahis5/adaptive_honeypot.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/sahis5/adaptive_honeypot/issues"
+  },
+  "homepage": "https://github.com/sahis5/adaptive_honeypot#readme",
+  "devDependencies": {}
+}
