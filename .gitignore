@@ -1,0 +1,9 @@
+dataset/
+*.csv
+*.pcap
+*.zip
+*.pptx
+*.docx
+*.pdf
+__pycache__/
+.env
