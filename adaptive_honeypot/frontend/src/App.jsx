@@ -15,18 +15,17 @@ import {
   CartesianGrid,
 } from "recharts";
 import "./styles.css";
+import { ThemeProvider, useTheme } from "./ThemeContext";
+import RetroGlobe from "./components/RetroGlobe";
 
 // Use Vite env (import.meta.env) — browser-safe
-// Vite exposes env vars via import.meta.env
 const BACKEND = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:5000";
-const TOKEN   = import.meta.env.VITE_ADMIN_TOKEN ?? "supersecretlocaltoken";
+const TOKEN = import.meta.env.VITE_ADMIN_TOKEN ?? "supersecretlocaltoken";
 
 
-/* small friendly mapping for long attack categories / reasons -> short labels */
+/* friendly mapping for attack categories */
 const friendlyType = (decision) => {
   if (!decision) return "Unknown";
-
-  // prefer explicit attack_type if present and short
   const at = decision.attack_type || decision.label || "";
   if (typeof at === "string" && at.trim().length) {
     const low = at.toLowerCase();
@@ -37,8 +36,6 @@ const friendlyType = (decision) => {
     if (low.includes("benign") || low.includes("normal")) return "Benign";
     return at.split("-")[0].trim();
   }
-
-  // fallback on reason names
   const r = (decision.reason || "").toLowerCase();
   if (r.includes("sqli")) return "SQLi";
   if (r.includes("xss")) return "XSS";
@@ -46,49 +43,61 @@ const friendlyType = (decision) => {
   if (r.includes("bruteforce")) return "Brute Force";
   if (r.includes("ml_detected")) return (decision.attack_type || "ML Attack");
   if (r.includes("no_match")) return "Benign";
-
   return "Unknown";
 };
 
-const colorFor = (label) => {
-  switch (label) {
-    case "SQLi": return "#e63946";
-    case "XSS": return "#f77f00";
-    case "Port Scan": return "#ffbe0b";
-    case "Brute Force": return "#8ac926";
-    case "Benign": return "#a8dadc";
-    case "Unknown": return "#6c757d";
-    default: return "#457b9d";
-  }
+// Cyber-themed colors
+const COLORS = {
+  SQLi: "#ef4444",        // Red
+  XSS: "#f97316",         // Orange
+  "Port Scan": "#fbbf24", // Amber
+  "Brute Force": "#84cc16", // Lime
+  Benign: "#3b82f6",      // Blue
+  Unknown: "#64748b",     // Slate
+  Default: "#6366f1"      // Indigo
 };
+
+const colorFor = (label) => COLORS[label] || COLORS.Default;
 
 function formatTs(ts) {
   if (!ts) return "";
   const t = Number(ts);
   if (!Number.isNaN(t)) {
-    // heuristics for seconds/millis
     if (t > 1e12) return dayjs(t).format("HH:mm:ss");
     if (t > 1e9) return dayjs(t * 1000).format("HH:mm:ss");
   }
-  // fallback - try to parse string timestamps
   const parsed = dayjs(ts);
   if (parsed.isValid()) return parsed.format("HH:mm:ss");
   return dayjs().format("HH:mm:ss");
 }
 
-export default function App() {
+function ThemeToggle() {
+  const { theme, toggleTheme } = useTheme();
+  return (
+    <button className="btn btn-ghost" onClick={toggleTheme} title="Toggle Theme">
+      {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
+    </button>
+  );
+}
+
+function DashboardContent() {
   const [status, setStatus] = useState(null);
   const [recent, setRecent] = useState([]);
   const [loading, setLoading] = useState(false);
+  const { theme } = useTheme();
+
+  // Chart customization based on theme
+  const chartStroke = theme === 'dark' ? '#94a3b8' : '#64748b';
+  const gridStroke = theme === 'dark' ? '#334155' : '#e2e8f0';
+  const tooltipBg = theme === 'dark' ? '#1e293b' : '#ffffff';
+  const tooltipBorder = theme === 'dark' ? '#334155' : '#e2e8f0';
 
   const fetchStatus = async () => {
     setLoading(true);
     try {
       const res = await axios.get(`${BACKEND}/debug/status?token=${TOKEN}`, { timeout: 4000 });
       setStatus(res.data);
-      // select recent_logs or recent_events (some backends differ)
       const logs = res.data?.recent_logs ?? res.data?.recent_events ?? res.data?.recent ?? [];
-      // ensure array and reverse so newest appear first in UI
       const arr = Array.isArray(logs) ? logs.slice().reverse() : [];
       setRecent(arr.slice(0, 200));
     } catch (err) {
@@ -102,13 +111,12 @@ export default function App() {
 
   useEffect(() => {
     fetchStatus();
-    const t = setInterval(fetchStatus, 3000);
-    return () => clearInterval(t);
+    const interval = setInterval(fetchStatus, 3000);
+    return () => clearInterval(interval);
   }, []);
 
   const parsedEvents = useMemo(() => {
     return recent.map((ev, idx) => {
-      // normalize across different event shapes
       const decision = ev.decision || ev.action_result?.decision || ev;
       const src = ev.src_ip || ev.source || ev.ip || ev.action_result?.src_ip || ev.host || "n/a";
       const ts = ev.ts || ev.time || ev.timestamp || ev.t || ev.created || Date.now();
@@ -130,7 +138,6 @@ export default function App() {
     });
   }, [recent]);
 
-  // attacks by type (pie)
   const attacksByType = useMemo(() => {
     const counts = {};
     parsedEvents.forEach((e) => {
@@ -139,127 +146,262 @@ export default function App() {
     return Object.entries(counts).map(([name, value]) => ({ name, value }));
   }, [parsedEvents]);
 
-  // attacks over time (line)
   const attacksOverTime = useMemo(() => {
     const map = {};
     parsedEvents.forEach((e) => {
       const key = formatTs(e.ts);
       map[key] = (map[key] || 0) + 1;
     });
-    // keep chronological order
     const entries = Object.entries(map).map(([time, value]) => ({ time, attacks: value }));
-    return entries.sort((a,b) => a.time.localeCompare(b.time));
+    return entries.sort((a, b) => a.time.localeCompare(b.time));
   }, [parsedEvents]);
+
+  // Determine if under active attack (event within last 10 seconds and not Benign)
+  const isAttackActive = useMemo(() => {
+    if (parsedEvents.length === 0) return false;
+    const latest = parsedEvents[0];
+    const now = Date.now();
+    // heuristic: if ts is recent
+    let t = Number(latest.ts);
+    if (t > 1e12) { /* ms */ } else if (t > 1e9) { t = t * 1000; } else { return false; }
+
+    const diff = now - t;
+    return (diff < 10000 && latest.label !== 'Benign' && latest.label !== 'Unknown');
+  }, [parsedEvents]);
+
+  const CustomTooltip = ({ active, payload, label }) => {
+    if (active && payload && payload.length) {
+      return (
+        <div style={{ background: tooltipBg, padding: '10px', border: `1px solid ${tooltipBorder}`, borderRadius: '8px' }}>
+          <p style={{ margin: 0, fontWeight: 'bold' }}>{label}</p>
+          <p style={{ margin: 0 }}>{`${payload[0].name}: ${payload[0].value}`}</p>
+        </div>
+      );
+    }
+    return null;
+  };
 
   return (
     <div className="page">
       <header className="topbar">
-        <h1>Adaptive Honeypot — Dashboard</h1>
+        <div className="brand">
+          <div className="brand-icon">🛡️</div>
+          <h1>Adaptive Honeypot Command Center</h1>
+        </div>
         <div className="top-actions">
-          <button className="btn" onClick={fetchStatus}>{loading ? "Refreshing..." : "Refresh now"}</button>
-          <a className="btn ghost" href={BACKEND} target="_blank" rel="noreferrer">Open backend root</a>
+          <ThemeToggle />
+          <button className="btn btn-primary" onClick={fetchStatus}>
+            {loading ? <span className="shimmer">Refreshing...</span> : "Refresh Data"}
+          </button>
+          <a className="btn btn-ghost" href={BACKEND} target="_blank" rel="noreferrer">API Root</a>
         </div>
       </header>
 
       <section className="summary">
-        <div className="card small">
-          <div className="card-title">Service</div>
-          <div className="big">
-            {status && !status.error ? <span className="online">Online</span> : <span className="offline">Offline</span>}
+        {/* Retro Globe Card */}
+        {/* Retro Globe Card */}
+        <div className="card globe-card" style={{ padding: 0, position: 'relative', overflow: 'hidden', minHeight: '160px', background: 'var(--bg-card)' }}>
+          <div style={{ width: '100%', height: '100%', position: 'absolute', inset: 0 }}>
+            <RetroGlobe isAlert={isAttackActive} />
           </div>
-          <div className="muted">Last: {dayjs().format("DD/MM/YYYY, HH:mm:ss")}</div>
+
+          {/* Status Overlay - bottom left, hover only (handled in css) */}
+          <div className="threat-status" style={{
+            position: 'absolute',
+            bottom: 15,
+            left: 15,
+            pointerEvents: 'none',
+            zIndex: 10
+          }}>
+            <div className="card-title" style={{ marginBottom: 2 }}>Threat Status</div>
+            <div className="big-stat" style={{
+              fontSize: '1.2rem',
+              color: isAttackActive ? 'var(--danger)' : 'var(--primary)',
+              textShadow: '0 2px 4px rgba(0,0,0,0.5)'
+            }}>
+              {isAttackActive ? "⚠ CRITICAL ALERT" : "SYSTEM SECURE"}
+            </div>
+          </div>
         </div>
 
-        <div className="card small">
-          <div className="card-title">Models loaded</div>
-          <div className="big">
+        <div className="card">
+          <div className="card-title">System Status</div>
+          <div className="big-stat">
+            {status && !status.error ?
+              <span className="status-indicator status-online">● Online</span> :
+              <span className="status-indicator status-offline">● Offline</span>
+            }
+          </div>
+          <div className="meta-text">Last heartbeat: {dayjs().format("HH:mm:ss")}</div>
+        </div>
+
+        <div className="card">
+          <div className="card-title">Active Models</div>
+          <div className="big-stat">
             {status?.models_list
               ? (Array.isArray(status.models_list) ? status.models_list.length : Object.keys(status.models_list || {}).length)
               : 0}
           </div>
-          <div className="muted small-wrap">{status?.external_models_dir ?? "—"}</div>
+          <div className="meta-text">AI Detection Engines</div>
         </div>
 
-        <div className="card small">
-          <div className="card-title">Q-table</div>
-          <div className="big">{status?.q_table_exists ? "Yes" : "No"}</div>
-          <div className="muted">RL Q-table loaded?</div>
-        </div>
-
-        <div className="card small">
-          <div className="card-title">Recent detections</div>
-          <div className="big">{parsedEvents.length}</div>
-          <div className="muted">recent events shown</div>
+        <div className="card">
+          <div className="card-title">Total Detections</div>
+          <div className="big-stat">{parsedEvents.length}</div>
+          <div className="meta-text">In current session</div>
         </div>
       </section>
 
       <section className="main-grid">
-        <div className="card events">
-          <div className="card-title">Recent events</div>
+        <div className="card events-card">
+          <div className="card-title" style={{ marginBottom: '16px' }}>Live Threat Feed</div>
+
           {parsedEvents.length === 0 ? (
-            <div className="empty">No recent events</div>
+            <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>
+              No threats detected in current window.
+            </div>
           ) : (
-            <table className="events-table">
-              <thead>
-                <tr><th>Time</th><th>Source</th><th>Type</th><th>Conf</th><th>Action</th></tr>
-              </thead>
-              <tbody>
-                {parsedEvents.slice(0, 10).map(ev => (
-                  <tr key={ev.id}>
-                    <td>{ev.when}</td>
-                    <td>{ev.src}</td>
-                    <td>{ev.label}</td>
-                    <td>{Math.round((ev.conf || 0) * 100)}%</td>
-                    <td><span className={`badge ${ev.action === "redirect" ? "badge-warn" : "badge-ok"}`}>{ev.action}</span></td>
+            <div className="table-container">
+              <table className="events-table">
+                <thead>
+                  <tr>
+                    <th>Timestamp</th>
+                    <th>Source IP</th>
+                    <th>Classification</th>
+                    <th>Confidence</th>
+                    <th>Response Action</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {parsedEvents.slice(0, 15).map(ev => (
+                    <tr key={ev.id}>
+                      <td className="mono" style={{ color: 'var(--text-muted)' }}>{ev.when}</td>
+                      <td className="mono">{ev.src}</td>
+                      <td>
+                        <span className="badge" style={{
+                          backgroundColor: `${colorFor(ev.label)}20`,
+                          color: colorFor(ev.label)
+                        }}>
+                          {ev.label}
+                        </span>
+                      </td>
+                      <td>
+                        {/* Progress bar style confidence */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <div style={{ flex: 1, height: '4px', background: 'var(--border)', borderRadius: '2px', width: '60px' }}>
+                            <div style={{
+                              width: `${(ev.conf || 0) * 100}%`,
+                              height: '100%',
+                              background: ev.conf > 0.8 ? 'var(--success)' : 'var(--warning)',
+                              borderRadius: '2px'
+                            }} />
+                          </div>
+                          <span style={{ fontSize: '0.75rem' }}>{Math.round((ev.conf || 0) * 100)}%</span>
+                        </div>
+                      </td>
+                      <td>
+                        <span className={`badge ${ev.action === "redirect" ? "badge-warning" : "badge-success"}`}>
+                          {ev.action === 'redirect' ? '⚠️ HONEYPOT' : 'ALLOW'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
 
-        <div className="card status">
-          <div className="card-title">Backend status</div>
-          <pre className="status-box">{status ? JSON.stringify(status, null, 2) : "No status"}</pre>
-          <div className="card-actions">
-            <button className="btn" onClick={() => { setRecent([]); }}>Clear events</button>
-            <a className="btn ghost" href={`${BACKEND}/debug/status?token=${TOKEN}`} target="_blank" rel="noreferrer">Open backend UI</a>
+        <div className="right-panel" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          <div className="card chart-card">
+            <div className="card-title">Attack Distribution</div>
+            <div className="chart-body">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={attacksByType}
+                    dataKey="value"
+                    nameKey="name"
+                    innerRadius={60}
+                    outerRadius={85}
+                    paddingAngle={4}
+                    stroke="none"
+                  >
+                    {attacksByType.map((entry) => (
+                      <Cell key={entry.name} fill={colorFor(entry.name)} />
+                    ))}
+                  </Pie>
+                  <Tooltip content={<CustomTooltip />} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '10px', fontSize: '0.75rem' }}>
+              {attacksByType.map(a => (
+                <div key={a.name} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: colorFor(a.name) }} />
+                  <span style={{ color: 'var(--text-muted)' }}>{a.name}</span>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
 
-        <div className="card chart-card">
-          <div className="card-title">Attacks by type</div>
-          <div style={{ width: "100%", height: 220 }}>
-            <ResponsiveContainer>
-              <PieChart>
-                <Pie data={attacksByType} dataKey="value" nameKey="name" innerRadius={50} outerRadius={80} paddingAngle={2}>
-                  {attacksByType.map((entry) => (
-                    <Cell key={entry.name} fill={colorFor(entry.name)} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(v) => `${v} events`} />
-              </PieChart>
-            </ResponsiveContainer>
+          <div className="card chart-card">
+            <div className="card-title">Traffic Velocity</div>
+            <div className="chart-body">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={attacksOverTime}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} vertical={false} />
+                  <XAxis
+                    dataKey="time"
+                    stroke={chartStroke}
+                    fontSize={12}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <YAxis
+                    allowDecimals={false}
+                    stroke={chartStroke}
+                    fontSize={12}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Line
+                    type="monotone"
+                    dataKey="attacks"
+                    stroke="var(--primary)"
+                    strokeWidth={3}
+                    dot={{ r: 4, fill: 'var(--bg-card)', strokeWidth: 2 }}
+                    activeDot={{ r: 6 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
           </div>
-        </div>
 
-        <div className="card chart-card">
-          <div className="card-title">Attacks over time</div>
-          <div style={{ width: "100%", height: 220 }}>
-            <ResponsiveContainer>
-              <LineChart data={attacksOverTime}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="time" />
-                <YAxis allowDecimals={false} />
-                <Tooltip />
-                <Line type="monotone" dataKey="attacks" stroke="#1f77b4" strokeWidth={2} dot={{ r: 3 }} />
-              </LineChart>
-            </ResponsiveContainer>
+          <div className="card" style={{ maxHeight: '300px', display: 'flex', flexDirection: 'column' }}>
+            <div className="card-title">Backend Diagnostics</div>
+            <div className="terminal-box custom-scrollbar">
+              {status ? JSON.stringify(status, null, 2) : "Establishing connection..."}
+            </div>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button className="btn btn-ghost" style={{ width: '100%' }} onClick={() => setRecent([])}>Clear Local Log</button>
+            </div>
           </div>
         </div>
       </section>
 
-      <footer className="footer">Dashboard automatically refreshes every 3s.</footer>
+      <footer className="footer">
+        System Auto-Refresh: 3000ms • Connected to {BACKEND}
+      </footer>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <ThemeProvider>
+      <DashboardContent />
+    </ThemeProvider>
   );
 }
